@@ -2,12 +2,18 @@ from telegram.ext import Updater
 from telegram.ext import CommandHandler, MessageHandler, Filters
 from telegram import ReplyKeyboardMarkup, KeyboardButton
 from data.db_session import *
+from data.spells import Spells
+from data.classes import Classes
 import logging
 
-logging.basicConfig(level=logging.INFO)
-bard, wizard, druid, priest, magician, pathfinder, paladin, witcher, is_count = False, False, False, False, False, False, False, False, False
+logging.basicConfig(
+    filename='example.log',
+    format='%(asctime)s %(levelname)s %(name)s %(message)s'
+)
+classes, is_count = False, False
 
-your_lvl = True
+global_init('db/spells.db')
+your_lvl = False
 reply_keyboard = [['/classes', '/spells']]
 special_for_spells = ReplyKeyboardMarkup([['/close']], one_time_keyboard=True)
 reply_markup_classes = [['/bard', '/wizard', '/druid', '/priest'], ['/magician', '/pathfinder', '/paladin', '/witcher'],
@@ -27,9 +33,24 @@ def classes(update, context):
 
 
 def choose_lvl(clas):
-    global your_lvl, bard, wizard, druid, priest, magician, pathfinder, paladin, witcher
-    classes = [bard, wizard, druid, priest, magician, pathfinder, paladin, witcher]
-    classes[clas] = True
+    global your_lvl, classes, is_count
+    is_count = False
+    if clas == 0:
+        classes = 'Бард'
+    elif clas == 1:
+        classes = 'Волшебник'
+    elif clas == 2:
+        classes = 'Друид'
+    elif clas == 3:
+        classes = 'Жрец'
+    elif clas == 4:
+        classes = 'Чародей'
+    elif clas == 5:
+        classes = 'Следопыт'
+    elif clas == 6:
+        classes = 'Паладин'
+    elif clas == 7:
+        classes = 'Колдун'
     your_lvl = True
 
 
@@ -76,15 +97,42 @@ def witcher(update, context):
 def say_spell(update, context):
     global is_count, your_lvl
     exitt = ['Выйти', 'выйти', 'close', 'Close']
-    if update.message.text in exitt and is_count:
+    if update.message.text in exitt and (is_count or your_lvl):
         close(update, context)
         return
     if is_count:
         db_sess = create_session()
+        logging.info('Произошел запрос:' + update.message.text.upper())
+        try:
+            spells = db_sess.query(Spells).filter(Spells.name.like(f'%{update.message.text.upper()}%')).all()
+            if spells:
+                for spell in spells:
+                    logging.info('По запросу найден ' + spell.name)
+                    update.message.reply_text(
+                        spell.name + '\n' + 'Уровень:' + str(spell.level) + '\n' + 'Компоненты' + spell.components + '\n' + spell.description)
+            else:
+                logging.info('Не найден запрос')
+                update.message.reply_text('Вы ввели неверное название заклинания, попробуйте еще раз')
+        except Exception as e:
+            logging.error(e)
+            update.message.reply_text('Ошибка сервера')
 
-        update.message.reply_text('Hi')
-    if your_lvl:
-        update.message.reply_text('Hoi')
+    elif your_lvl:
+        lvl = update.message.text
+        db_sess = create_session()
+        spells = db_sess.query(Classes).filter(Classes.name == classes).all()
+        if spells:
+            text = ''
+            for spell in spells:
+                logging.info('Получен запрос на получение заклинаний')
+                spell_list = [i.upper() for i in spells[0].spells_list.split('\n')]
+                new_spells = db_sess.query(Spells).filter(Spells.name.in_(spell_list), Spells.level <= lvl).all()
+                for n_spell in new_spells:
+                    text += n_spell.name + '\n'
+                update.message.reply_text('Доступные вам заклинания:\n' + text)
+                is_count = True
+        else:
+            logging.error('Остутствие класса' + classes)
     your_lvl = False
 
 
@@ -103,7 +151,6 @@ def close(update, context):
 
 def main():
     global is_count
-    global_init('db/spells.db')
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
     logging.info('Start server')
