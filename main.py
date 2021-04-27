@@ -1,26 +1,35 @@
 from telegram.ext import Updater
-from telegram.ext import CommandHandler, MessageHandler, Filters
+from telegram.ext import CommandHandler, MessageHandler, Filters, ConversationHandler
 from telegram import ReplyKeyboardMarkup, KeyboardButton
 from data.db_session import *
 from data.spells import Spells
 from data.classes import Classes
+from data.players import Players
+from api_folder import all_for_api
+from requests import get, post, delete
 import logging
 
-logging.basicConfig(
-    filename='example.log',
-    format='%(asctime)s %(levelname)s %(name)s %(message)s'
-)
+logging.basicConfig(level=logging.INFO, filename='logs_all.log',
+                    format='%(asctime)s %(levelname)s %(name)s %(message)s'
+                    )
 classes, is_count = False, False
-
+id = 1
 global_init('db/spells.db')
 your_lvl = False
-reply_keyboard = [['/classes', '/spells']]
+is_exit = False
+reply_keyboard = [['/classes', '/spells', '/create_hero'], ['/All_heroes']]
 special_for_spells = ReplyKeyboardMarkup([['/close']], one_time_keyboard=True)
 reply_markup_classes = [['/bard', '/wizard', '/druid', '/priest'], ['/magician', '/pathfinder', '/paladin', '/witcher'],
                         ['/close']]
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 markup_classes = ReplyKeyboardMarkup(reply_markup_classes, one_time_keyboard=False)
+ac = [['Бард', 'Чародей', 'Волшебник'], ['Варвар', 'Друид', 'Воин'], ['Жрец', 'Монах', 'Колдун'],
+      ['Плут', 'Паладин', 'Следопыт'], ['/close']]
+all_classes = ReplyKeyboardMarkup(ac, one_time_keyboard=True)
+ar = [['Высший Эльф', 'Лесной эльф', 'Полурослик'], ['Человек', 'Горный Дварф', 'Холмовой Дварф'], ['/close']]
+all_races = ReplyKeyboardMarkup(ar, one_time_keyboard=True)
 TOKEN = '1712547917:AAENBafzhZVC8onZ6qD6GnuDr6TJakuJa1g'
+klass, race = '', ''
 
 
 def start(update, context):
@@ -94,6 +103,25 @@ def witcher(update, context):
     update.message.reply_text('Введите ваш уровень')
 
 
+def show_all_heroes(update, context):
+    heroes = get('http://127.0.0.1:5000/api/player').json()
+    for hero in heroes['players']:
+        global id
+        id = max(hero['id'], id)
+        update.message.reply_text(
+            'Имя: ' + hero['name'] + '\nУровень: ' + str(hero['level']) + '\nКласс: ' + hero['y_class'] + '\nРаса: ' +
+            hero['race'])
+
+
+def exit(update, context):
+    update.message.reply_text('Вы вернулись назад', reply_markup=markup)
+
+
+def starter(update, context):
+    update.message.reply_text('Вы решили создать класс, выберите класс', reply_markup=all_classes)
+    return 1
+
+
 def say_spell(update, context):
     global is_count, your_lvl
     exitt = ['Выйти', 'выйти', 'close', 'Close']
@@ -109,7 +137,8 @@ def say_spell(update, context):
                 for spell in spells:
                     logging.info('По запросу найден ' + spell.name)
                     update.message.reply_text(
-                        spell.name + '\n' + 'Уровень:' + str(spell.level) + '\n' + 'Компоненты' + spell.components + '\n' + spell.description)
+                        spell.name + '\n' + 'Уровень:' + str(
+                            spell.level) + '\n' + 'Компоненты' + spell.components + '\n' + spell.description)
             else:
                 logging.info('Не найден запрос')
                 update.message.reply_text('Вы ввели неверное название заклинания, попробуйте еще раз')
@@ -126,7 +155,7 @@ def say_spell(update, context):
             for spell in spells:
                 logging.info('Получен запрос на получение заклинаний')
                 spell_list = [i.upper() for i in spells[0].spells_list.split('\n')]
-                new_spells = db_sess.query(Spells).filter(Spells.name.in_(spell_list), Spells.level <= lvl).all()
+                new_spells = db_sess.query(Spells).filter(Spells.name.in_(spell_list), Spells.level == lvl).all()
                 for n_spell in new_spells:
                     text += n_spell.name + '\n'
                 update.message.reply_text('Доступные вам заклинания:\n' + text)
@@ -144,17 +173,78 @@ def spells(update, context):
 
 
 def close(update, context):
-    global is_count, your_lvl
+    global is_count, your_lvl, klass, id
+    klass = ''
+    id = 1
     is_count, your_lvl = False, False
     update.message.reply_text('Вы вернулись назад', reply_markup=markup)
 
 
+def first_response(update, context):
+    logging.info('Первая часть запроса')
+    classs = ac[0] + ac[1] + ac[2] + ac[3]
+    if update.message.text not in classs:
+        update.message.reply_text('Вы выбрали неверный класс, начните сначала')
+    else:
+        global klass
+        klass = update.message.text
+        update.message.reply_text('Выберите расу', reply_markup=all_races)
+        return 2
+
+
+def second_response(update, context):
+    logging.info('Вторая часть запроса')
+    races = ar[0] + ar[1]
+    if update.message.text not in races:
+        update.message.reply_text('Вы выбрали неверную расу, начните сначала')
+    else:
+        global race
+        race = update.message.text.capitalize()
+        update.message.reply_text('Ну и наконец назовите вашего персонажа')
+        return 3
+
+
+def third_response(update, context):
+    global klass, race
+    logging.info('Третий запрос выполнен')
+    if '/' in update.message.text:
+        return ConversationHandler.END
+    else:
+        global id
+        id += 1
+        post('http://127.0.0.1:5000/api/player',
+             json={'id': id,
+                   'name': update.message.text,
+                   'y_class': klass,
+                   'race': race,
+                   'level': 1,
+                   'speciality': 'some_string',
+                   'known_spells': 'some_string'})
+        update.message.reply_text('Вы успешно создали персонажа', reply_markup=markup)
+        return ConversationHandler.END
+
+
 def main():
     global is_count
+    from api_folder.all_for_api import app, api
+    api.add_resource(all_for_api.ClassListResource, '/api/player')
+    api.add_resource(all_for_api.ClassResource, '/api/player/<int:class_id>')
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
     logging.info('Start server')
     updater.start_polling()
+    dp.add_handler(CommandHandler('All_heroes', show_all_heroes))
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('create_hero', starter)],
+
+        states={
+            1: [MessageHandler(Filters.text, first_response)],
+            2: [MessageHandler(Filters.text, second_response)],
+            3: [MessageHandler(Filters.text, third_response)]
+        },
+        fallbacks=[CommandHandler('close', exit)]
+    )
+    dp.add_handler(conv_handler)
     dp.add_handler(CommandHandler('start', start))
     dp.add_handler(CommandHandler('classes', classes))
     dp.add_handler(CommandHandler('close', close))
@@ -168,6 +258,7 @@ def main():
     dp.add_handler(CommandHandler('paladin', paladin))
     dp.add_handler(CommandHandler('witcher', witcher))
     dp.add_handler(MessageHandler(Filters.text, say_spell))
+    app.run()
     updater.idle()
     logging.info('Finish server')
 
