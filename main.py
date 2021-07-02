@@ -28,6 +28,15 @@ all_classes = ReplyKeyboardMarkup(ac, one_time_keyboard=True)
 TOKEN = '1712547917:AAENBafzhZVC8onZ6qD6GnuDr6TJakuJa1g'
 
 
+import urllib2
+
+def internet_on():
+    try:
+        urllib2.urlopen('http://216.58.192.142', timeout=1)
+        return True
+    except urllib2.URLError as err: 
+        return False
+
 def start(update, context):
     update.message.reply_text('Данный бот отправляет данные по заклинаниям классов игры DnD', reply_markup=markup)
 
